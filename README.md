@@ -1,6 +1,6 @@
 # ExcaliDash API
 
-> Programmatic diagram creation for [Excalidash](https://github.com/excalidraw/excalidash) — turn GraphJSON into beautiful Excalidraw diagrams with dagre auto-layout.
+> Programmatic diagram creation for [Excalidash](https://github.com/ZimengXiong/ExcaliDash) — turn GraphJSON into beautiful Excalidraw diagrams with dagre auto-layout.
 
 ## Features
 
