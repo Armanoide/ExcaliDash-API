@@ -27,8 +27,8 @@ async function loadSession(jwtSub: string): Promise<ExcalidashClient | null> {
 /**
  * Validate drawing ID parameter.
  */
-function validateId(id: string): boolean {
-  return DRAWING_ID_PATTERN.test(id)
+function validateId(id: string | string[] | undefined): id is string {
+  return typeof id === 'string' && DRAWING_ID_PATTERN.test(id)
 }
 
 /**
