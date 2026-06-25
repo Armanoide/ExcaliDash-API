@@ -1,6 +1,4 @@
 import { Pool } from 'pg'
-import { config } from '../config'
-import { fetchWithTimeout } from '../utils/http'
 
 export interface SessionData {
   userId: string
@@ -8,25 +6,29 @@ export interface SessionData {
   name: string | null
   cookies: string[]
   csrfToken: string
-  password: string
 }
 
 export class SessionStore {
   constructor(private pool: Pool) {}
 
-  async save(jwtSub: string, user: { id: string; email: string; name?: string }, password: string, cookies: string[], csrfToken: string, expiresInMs: number): Promise<void> {
+  async save(
+    jwtSub: string,
+    user: { id: string; email: string; name?: string },
+    cookies: string[],
+    csrfToken: string,
+    expiresInMs: number,
+  ): Promise<void> {
     const now = new Date().toISOString()
     const expiresAt = new Date(Date.now() + expiresInMs).toISOString()
     await this.pool.query(`
-      INSERT INTO api_sessions (api_jwt_sub, excalidash_user_id, excalidash_email, excalidash_user_name, cookies, csrf_token, password, expires_at, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      INSERT INTO api_sessions (api_jwt_sub, excalidash_user_id, excalidash_email, excalidash_user_name, cookies, csrf_token, expires_at, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       ON CONFLICT (api_jwt_sub) DO UPDATE SET
         excalidash_user_id = EXCLUDED.excalidash_user_id,
         excalidash_email = EXCLUDED.excalidash_email,
         excalidash_user_name = EXCLUDED.excalidash_user_name,
         cookies = EXCLUDED.cookies,
         csrf_token = EXCLUDED.csrf_token,
-        password = EXCLUDED.password,
         expires_at = EXCLUDED.expires_at,
         updated_at = EXCLUDED.updated_at
     `, [
@@ -36,7 +38,6 @@ export class SessionStore {
       user.name || null,
       JSON.stringify(cookies),
       csrfToken,
-      password,
       expiresAt,
       now,
       now,
@@ -56,7 +57,6 @@ export class SessionStore {
       name: row.excalidash_user_name,
       cookies: JSON.parse(row.cookies),
       csrfToken: row.csrf_token,
-      password: row.password,
     }
   }
 

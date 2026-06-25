@@ -26,12 +26,22 @@ export async function createSessionsTable(): Promise<void> {
       excalidash_user_name TEXT,
       cookies TEXT NOT NULL DEFAULT '[]',
       csrf_token TEXT NOT NULL DEFAULT '',
-      password TEXT NOT NULL DEFAULT '',
       api_jwt_sub TEXT NOT NULL UNIQUE,
       created_at TIMESTAMPTZ DEFAULT now(),
       updated_at TIMESTAMPTZ DEFAULT now(),
       expires_at TIMESTAMPTZ NOT NULL
     )
+  `)
+  // Migrate: drop password column if it exists (from v1)
+  await pool.query(`
+    DO $$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'api_sessions' AND column_name = 'password'
+      ) THEN
+        ALTER TABLE api_sessions DROP COLUMN password;
+      END IF;
+    END $$
   `)
   // Cleanup expired sessions
   await pool.query('DELETE FROM api_sessions WHERE expires_at < now()')

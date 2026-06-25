@@ -10,7 +10,11 @@ import { swaggerSpec } from './config/openapi'
 const app = express()
 
 // Global middleware
-app.use(cors({ origin: config.frontendUrl }))
+app.use(cors({
+  origin: config.frontendUrl,
+  exposedHeaders: ['Authorization', 'Content-Length'],
+  optionsSuccessStatus: 204,
+}))
 app.use(express.json({ limit: '1mb' }))
 
 // Health check

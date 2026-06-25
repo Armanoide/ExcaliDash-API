@@ -3,6 +3,7 @@
 export interface Config {
   backend: string
   frontendUrl: string
+  frontendHost: string
   requestTimeout: number
   jwtSecret: string
   apiJwtExpiresIn: string
@@ -15,7 +16,11 @@ function parseBackend(raw: string): string {
   return raw.startsWith('http') ? raw : `http://${raw}`
 }
 
-function parseDuration(duration: string): number {
+/**
+ * Parse duration string to milliseconds.
+ * Supports formats: 15s, 30m, 1h, 7d
+ */
+export function parseDuration(duration: string): number {
   const match = duration.match(/^(\d+)(s|m|h|d)$/i)
   if (!match) return 3600000
   const [, val, unit] = match
@@ -43,9 +48,15 @@ function load(): Config {
     process.exit(1)
   }
 
+  const frontendUrl = process.env.FRONTEND_URL || backendUrl
+  const frontendHost = frontendUrl.startsWith('http')
+    ? new URL(frontendUrl).host
+    : frontendUrl
+
   return {
     backend: parseBackend(backendUrl),
-    frontendUrl: process.env.FRONTEND_URL || backendUrl,
+    frontendUrl,
+    frontendHost,
     requestTimeout: parseInt(process.env.REQUEST_TIMEOUT || '15000'),
     jwtSecret,
     apiJwtExpiresIn: process.env.API_JWT_EXPIRES_IN || '1h',

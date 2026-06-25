@@ -6,11 +6,15 @@ import { ExcalidashClient } from '../clients/excalidash'
 import { graphToElements, GraphInput } from '../converters/graph-to-elements'
 import { AuthRequest } from '../middleware/auth'
 import { safeError } from '../utils/http'
+import { logger } from '../utils/logger'
 
 const router = Router()
 const store = new SessionStore(getPool())
 
 const SESSION_EXPIRED_MSG = 'Session expired, please login again'
+
+// Valid drawing ID pattern: alphanumeric, hyphens, underscores, UUIDs
+const DRAWING_ID_PATTERN = /^[a-zA-Z0-9_-]+$/
 
 /**
  * Helper to load user's Excalidash session.
@@ -18,6 +22,13 @@ const SESSION_EXPIRED_MSG = 'Session expired, please login again'
 async function loadSession(jwtSub: string): Promise<ExcalidashClient | null> {
   const client = new ExcalidashClient(config.backend, jwtSub, store)
   return (await client.load()) ? client : null
+}
+
+/**
+ * Validate drawing ID parameter.
+ */
+function validateId(id: string): boolean {
+  return DRAWING_ID_PATTERN.test(id)
 }
 
 /**
@@ -31,12 +42,20 @@ function handle(fn: (req: AuthRequest, res: Response) => Promise<void>) {
         res.status(401).json({ error: SESSION_EXPIRED_MSG })
         return
       }
-      console.error('[api] route error:', message)
+      logger.error('[api] route error:', message)
       res.status(500).json({ error: safeError(err) })
     })
   }
 }
 
+// Response types
+interface CreateDrawingResponse { id: string; name: string; elements: number }
+interface UpdateDrawingResponse { id: string; name: string; version: number }
+interface DuplicateDrawingResponse { id: string; name: string }
+interface ShareUserResponse { drawingId: string; permission: string; grantee: { id: string; name: string; email: string } }
+interface ShareLinkResponse { drawingId: string; permission: string; expiresAt: string | null; url: string }
+
+// POST /drawing
 /**
  * @swagger
  * /drawing:
@@ -118,9 +137,10 @@ router.post('/drawing', handle(async (req: AuthRequest, res: Response): Promise<
     appState: { viewBackgroundColor: '#ffffff' },
   })
 
-  res.json({ id: (data as { id: string }).id, name: fileName, elements: elements.length })
+  res.json({ id: (data as { id: string }).id, name: fileName, elements: elements.length } as CreateDrawingResponse)
 }))
 
+// GET /drawings
 /**
  * @swagger
  * /drawings:
@@ -184,6 +204,7 @@ router.get('/drawings', handle(async (req: AuthRequest, res: Response): Promise<
   res.json(data)
 }))
 
+// GET /drawing/:id
 /**
  * @swagger
  * /drawing/{id}:
@@ -197,7 +218,7 @@ router.get('/drawings', handle(async (req: AuthRequest, res: Response): Promise<
  *         required: true
  *         schema:
  *           type: string
- *         description: Drawing ID
+ *         description: Drawing ID (alphanumeric, hyphens, underscores)
  *     responses:
  *       200:
  *         description: Drawing data
@@ -205,6 +226,12 @@ router.get('/drawings', handle(async (req: AuthRequest, res: Response): Promise<
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Drawing'
+ *       400:
+ *         description: Invalid drawing ID
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       401:
  *         description: Session expired
  *         content:
@@ -225,7 +252,7 @@ router.get('/drawings', handle(async (req: AuthRequest, res: Response): Promise<
  *         required: true
  *         schema:
  *           type: string
- *         description: Drawing ID
+ *         description: Drawing ID (alphanumeric, hyphens, underscores)
  *     requestBody:
  *       required: true
  *       content:
@@ -243,6 +270,12 @@ router.get('/drawings', handle(async (req: AuthRequest, res: Response): Promise<
  *                 id: { type: string }
  *                 name: { type: string }
  *                 version: { type: integer }
+ *       400:
+ *         description: Invalid drawing ID
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       401:
  *         description: Session expired
  *         content:
@@ -259,10 +292,16 @@ router.get('/drawings', handle(async (req: AuthRequest, res: Response): Promise<
  *         required: true
  *         schema:
  *           type: string
- *         description: Drawing ID
+ *         description: Drawing ID (alphanumeric, hyphens, underscores)
  *     responses:
  *       200:
  *         description: Drawing deleted
+ *       400:
+ *         description: Invalid drawing ID
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       401:
  *         description: Session expired
  *         content:
@@ -271,6 +310,10 @@ router.get('/drawings', handle(async (req: AuthRequest, res: Response): Promise<
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.get('/drawing/:id', handle(async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!validateId(req.params.id)) {
+    res.status(400).json({ error: 'Invalid drawing ID' })
+    return
+  }
   const sess = await loadSession(req.apiJwtSub!)
   if (!sess) {
     res.status(401).json({ error: 'Session expired, please login again' })
@@ -282,6 +325,10 @@ router.get('/drawing/:id', handle(async (req: AuthRequest, res: Response): Promi
 }))
 
 router.put('/drawing/:id', handle(async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!validateId(req.params.id)) {
+    res.status(400).json({ error: 'Invalid drawing ID' })
+    return
+  }
   const sess = await loadSession(req.apiJwtSub!)
   if (!sess) {
     res.status(401).json({ error: 'Session expired, please login again' })
@@ -296,10 +343,14 @@ router.put('/drawing/:id', handle(async (req: AuthRequest, res: Response): Promi
   if (collectionId !== undefined) payload.collectionId = collectionId
 
   const data = await sess.put(`/drawings/${req.params.id}`, payload)
-  res.json({ id: (data as { id: string }).id, name: (data as { name: string }).name, version: (data as { version: number }).version })
+  res.json({ id: (data as { id: string }).id, name: (data as { name: string }).name, version: (data as { version: number }).version } as UpdateDrawingResponse)
 }))
 
 router.delete('/drawing/:id', handle(async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!validateId(req.params.id)) {
+    res.status(400).json({ error: 'Invalid drawing ID' })
+    return
+  }
   const sess = await loadSession(req.apiJwtSub!)
   if (!sess) {
     res.status(401).json({ error: 'Session expired, please login again' })
@@ -310,6 +361,7 @@ router.delete('/drawing/:id', handle(async (req: AuthRequest, res: Response): Pr
   res.json(data)
 }))
 
+// POST /drawing/:id/duplicate
 /**
  * @swagger
  * /drawing/{id}/duplicate:
@@ -334,6 +386,12 @@ router.delete('/drawing/:id', handle(async (req: AuthRequest, res: Response): Pr
  *               properties:
  *                 id: { type: string, description: 'New drawing ID' }
  *                 name: { type: string, description: 'New drawing name' }
+ *       400:
+ *         description: Invalid drawing ID
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       401:
  *         description: Session expired
  *         content:
@@ -342,6 +400,10 @@ router.delete('/drawing/:id', handle(async (req: AuthRequest, res: Response): Pr
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.post('/drawing/:id/duplicate', handle(async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!validateId(req.params.id)) {
+    res.status(400).json({ error: 'Invalid drawing ID' })
+    return
+  }
   const sess = await loadSession(req.apiJwtSub!)
   if (!sess) {
     res.status(401).json({ error: 'Session expired, please login again' })
@@ -349,9 +411,10 @@ router.post('/drawing/:id/duplicate', handle(async (req: AuthRequest, res: Respo
   }
 
   const data = await sess.post(`/drawings/${req.params.id}/duplicate`, {})
-  res.json({ id: (data as { id: string }).id, name: (data as { name: string }).name })
+  res.json({ id: (data as { id: string }).id, name: (data as { name: string }).name } as DuplicateDrawingResponse)
 }))
 
+// POST /drawing/:id/share
 /**
  * @swagger
  * /drawing/{id}/share:
@@ -391,7 +454,7 @@ router.post('/drawing/:id/duplicate', handle(async (req: AuthRequest, res: Respo
  *                     name: { type: string }
  *                     email: { type: string }
  *       400:
- *         description: Missing userEmail or userName
+ *         description: Invalid drawing ID or missing userEmail/userName
  *         content:
  *           application/json:
  *             schema:
@@ -404,6 +467,10 @@ router.post('/drawing/:id/duplicate', handle(async (req: AuthRequest, res: Respo
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.post('/drawing/:id/share', handle(async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!validateId(req.params.id)) {
+    res.status(400).json({ error: 'Invalid drawing ID' })
+    return
+  }
   const sess = await loadSession(req.apiJwtSub!)
   if (!sess) {
     res.status(401).json({ error: 'Session expired, please login again' })
@@ -418,7 +485,7 @@ router.post('/drawing/:id/share', handle(async (req: AuthRequest, res: Response)
   }
 
   const query = userEmail || userName
-    const resolved = await sess.get(`/drawings/${req.params.id}/share-resolve?q=${encodeURIComponent(String(query))}`) as { users?: { id: string; email: string; name: string }[] }
+  const resolved = await sess.get(`/drawings/${req.params.id}/share-resolve?q=${encodeURIComponent(String(query))}`) as { users?: { id: string; email: string; name: string }[] }
 
   if (!resolved.users || resolved.users.length === 0) {
     res.status(404).json({ error: 'User not found', query })
@@ -438,9 +505,10 @@ router.post('/drawing/:id/share', handle(async (req: AuthRequest, res: Response)
     drawingId: req.params.id,
     permission: data.permission.permission,
     grantee: data.permission.granteeUser,
-  })
+  } as ShareUserResponse)
 }))
 
+// POST /drawing/:id/share-link
 /**
  * @swagger
  * /drawing/{id}/share-link:
@@ -472,6 +540,12 @@ router.post('/drawing/:id/share', handle(async (req: AuthRequest, res: Response)
  *                 permission: { type: string, enum: ['view', 'edit'] }
  *                 expiresAt: { type: string, format: date-time, nullable: true }
  *                 url: { type: string, format: uri }
+ *       400:
+ *         description: Invalid drawing ID
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       401:
  *         description: Session expired
  *         content:
@@ -480,6 +554,10 @@ router.post('/drawing/:id/share', handle(async (req: AuthRequest, res: Response)
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.post('/drawing/:id/share-link', handle(async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!validateId(req.params.id)) {
+    res.status(400).json({ error: 'Invalid drawing ID' })
+    return
+  }
   const sess = await loadSession(req.apiJwtSub!)
   if (!sess) {
     res.status(401).json({ error: 'Session expired, please login again' })
@@ -489,14 +567,18 @@ router.post('/drawing/:id/share-link', handle(async (req: AuthRequest, res: Resp
   const { permission = 'view' } = req.body as { permission?: string }
   const data = await sess.post(`/drawings/${req.params.id}/link-shares`, { permission }) as { share: { permission: string; expiresAt: string | null } }
 
+  // Extract hostname from frontendUrl for share link
+  const frontendHost = new URL(config.frontendUrl).host
+
   res.json({
     drawingId: req.params.id,
     permission: data.share.permission,
     expiresAt: data.share.expiresAt,
-    url: `https://draw.armanoide.net/drawing/${req.params.id}`,
-  })
+    url: `https://${frontendHost}/drawing/${req.params.id}`,
+  } as ShareLinkResponse)
 }))
 
+// GET /drawing/:id/sharing
 /**
  * @swagger
  * /drawing/{id}/sharing:
@@ -519,6 +601,12 @@ router.post('/drawing/:id/share-link', handle(async (req: AuthRequest, res: Resp
  *             schema:
  *               type: object
  *               description: Sharing configuration (permissions list, link share status)
+ *       400:
+ *         description: Invalid drawing ID
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       401:
  *         description: Session expired
  *         content:
@@ -527,6 +615,10 @@ router.post('/drawing/:id/share-link', handle(async (req: AuthRequest, res: Resp
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.get('/drawing/:id/sharing', handle(async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!validateId(req.params.id)) {
+    res.status(400).json({ error: 'Invalid drawing ID' })
+    return
+  }
   const sess = await loadSession(req.apiJwtSub!)
   if (!sess) {
     res.status(401).json({ error: 'Session expired, please login again' })

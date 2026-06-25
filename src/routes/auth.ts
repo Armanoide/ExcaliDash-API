@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express'
+import rateLimit from 'express-rate-limit'
 import { config } from '../config'
 import { getPool } from '../db/pool'
 import { SessionStore } from '../db/session-store'
@@ -10,26 +11,28 @@ import { randomUUID } from 'crypto'
 const router = Router()
 const store = new SessionStore(getPool())
 
-function parseDuration(duration: string): number {
-  const match = duration.match(/^(\d+)(s|m|h|d)$/i)
-  if (!match) return 3600000
-  const [, val, unit] = match
-  const n = parseInt(val)
-  switch (unit.toLowerCase()) {
-    case 's': return n * 1000
-    case 'm': return n * 60 * 1000
-    case 'h': return n * 3600 * 1000
-    case 'd': return n * 86400 * 1000
-    default: return 3600000
-  }
-}
+// Re-export parseDuration from config to avoid duplication
+const { parseDuration } = require('../config')
 
+// Max JWT expiry: 24 hours
+const MAX_JWT_EXPIRY_MS = 24 * 3600 * 1000
+
+// Rate limiting: 10 requests per 15 minutes per IP
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts, please try again later' },
+})
+
+// POST /auth/login (public)
 /**
  * @swagger
  * /auth/login:
  *   post:
  *     summary: Login and get JWT token
- *     description: Authenticate with email/password and receive a JWT access token + refresh token.
+ *     description: Authenticate with email/password and receive a JWT access token + refresh token. Rate limited to 10 attempts per 15 minutes.
  *     tags: [Auth]
  *     security: []
  *     requestBody:
@@ -57,8 +60,14 @@ function parseDuration(duration: string): number {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
+ *       429:
+ *         description: Too many login attempts
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post('/login', async (req: Request, res: Response): Promise<void> => {
+router.post('/login', loginLimiter, async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, password, expiresIn = config.apiJwtExpiresIn } = req.body
 
@@ -71,8 +80,11 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     const client = new ExcalidashClient(config.backend, jwtSub, store)
     const user = await client.login(email, password)
 
-    const parsedExpiresIn = parseDuration(expiresIn)
-    await store.save(jwtSub, user, password, client.getCookies(), client.getCsrfToken() ?? '', parsedExpiresIn)
+    // Cap maximum expiration at 24 hours
+    const rawExpiresIn = parseDuration(expiresIn as string)
+    const parsedExpiresIn = Math.min(rawExpiresIn, MAX_JWT_EXPIRY_MS)
+
+    await store.save(jwtSub, user, client.getCookies(), client.getCsrfToken() ?? '', parsedExpiresIn)
 
     const token = signJwt({
       sub: jwtSub,
@@ -94,6 +106,7 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
   }
 })
 
+// POST /auth/refresh (public)
 /**
  * @swagger
  * /auth/refresh:
@@ -167,6 +180,7 @@ router.post('/refresh', async (req: Request, res: Response): Promise<void> => {
   }
 })
 
+// GET /auth/me (protected)
 /**
  * @swagger
  * /auth/me:
@@ -202,11 +216,12 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
   }
 })
 
+// DELETE /auth/logout (protected)
 /**
  * @swagger
  * /auth/logout:
  *   delete:
- *     summary: Logout.Destroy current session
+ *     summary: Logout. Destroy current session
  *     description: Invalidates the current session.
  *     tags: [Auth]
  *     responses:

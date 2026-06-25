@@ -35,23 +35,19 @@ export class ExcalidashClient {
 
   async login(email: string, password: string): Promise<ExcalidashUser> {
     await this.doLogin(email, password)
-    return this.user!
-  }
-
-  async refreshSession(): Promise<void> {
-    const saved = await this.store.get(this.jwtSub)
-    if (!saved || !saved.password) {
-      throw new Error('No credentials stored for refresh')
+    if (!this.user) {
+      throw new Error('Login failed: no user returned')
     }
-    this.cookies = []
-    this.csrfToken = null
-    await this.doLogin(saved.email, saved.password)
+    return this.user
   }
 
   async get(path: string): Promise<unknown> {
     return this.withRetry(async () => {
       const res = await fetchWithTimeout(`${this.baseUrl}${path}`, {
-        headers: { Cookie: this.cookies.join('; ') },
+        headers: {
+          Cookie: this.cookies.join('; '),
+          'Content-Type': 'application/json',
+        },
       })
       if (res.status === 401) throw { status: 401 }
       return this.parseJson(res, `GET ${path}`)
@@ -157,14 +153,7 @@ export class ExcalidashClient {
       return result
     } catch (err) {
       if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 401) {
-        try {
-          await this.refreshSession()
-          const result = await fn()
-          await this.persist()
-          return result
-        } catch {
-          throw new Error('Session expired, please login again')
-        }
+        throw new Error('Session expired, please login again')
       }
       throw err
     }
