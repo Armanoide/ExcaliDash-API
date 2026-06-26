@@ -1,0 +1,37 @@
+services:
+  excalidash_api:
+    image: ghcr.io/armanoide/excalidash-api:latest
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    environment:
+      - BACKEND_URL=http://excalidash_backend:8000
+      - DATABASE_URL=postgresql://excalidash:excalidash@db:5432/excalidash
+      - JWT_SECRET=change-me-in-production
+      - FRONTEND_URL=https://draw.example.com
+      - API_JWT_EXPIRES_IN=1h
+      - API_REFRESH_EXPIRES_IN=7d
+      - PORT=3000
+      - REQUEST_TIMEOUT=15000
+      - LOG_LEVEL=info
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=excalidash
+      - POSTGRES_USER=excalidash
+      - POSTGRES_PASSWORD=excalidash
+    volumes:
+      - excalidash_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U excalidash']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  excalidash_db:
