@@ -75,22 +75,40 @@ curl -X POST https://api.draw.example.com/drawing \
 
 **Directions:** `TB` (Top→Bottom), `LR` (Left→Right), `BT` (Bottom→Top), `RL` (Right→Left)
 
-## Deployment
+## Installation
+
+### Docker (recommended)
+
+```bash
+docker run -d \
+  --name excalidash-api \
+  -e BACKEND_URL=http://excalidash_backend:8000 \
+  -e DATABASE_URL=postgresql://user:pass@db:5432/excalidash \
+  -e JWT_SECRET=your-secret-here \
+  -e FRONTEND_URL=https://draw.example.com \
+  -e API_JWT_EXPIRES_IN=1h \
+  -p 3000:3000 \
+  ghcr.io/armanoide/excalidash-api:latest
+```
 
 ### Docker Compose
 
 ```yaml
 services:
   excalidash_api:
-    build: .
+    image: ghcr.io/armanoide/excalidash-api:latest
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
     environment:
-      - BACKEND_URL=excalidash_backend:8000
+      - BACKEND_URL=http://excalidash_backend:8000
       - DATABASE_URL=postgresql://user:pass@db:5432/excalidash
       - JWT_SECRET=your-secret-here
+      - FRONTEND_URL=https://draw.example.com
       - API_JWT_EXPIRES_IN=1h
-    ports:
-      - "3000:3000"
 ```
+
+**Full `docker-compose.yml` with PostgreSQL:** [docker-compose.yml](docker-compose.yml)
 
 ### Environment Variables
 
@@ -99,9 +117,12 @@ services:
 | `BACKEND_URL` | yes | Excalidash backend URL |
 | `DATABASE_URL` | yes | PostgreSQL connection string |
 | `JWT_SECRET` | yes | Secret for signing JWT tokens |
+| `FRONTEND_URL` | yes | Frontend URL for CORS and share links |
 | `API_JWT_EXPIRES_IN` | no | JWT expiration (default: `1h`) |
 | `API_REFRESH_EXPIRES_IN` | no | Refresh token expiration (default: `7d`) |
 | `PORT` | no | Server port (default: `3000`) |
+| `REQUEST_TIMEOUT` | no | Request timeout in ms (default: `15000`) |
+| `LOG_LEVEL` | no | Log level (default: `info`) |
 
 ## Project Structure
 
@@ -117,6 +138,7 @@ services:
 │   ├── middleware/             # Auth + error handling
 │   └── routes/                # API routes
 ├── Dockerfile
+├── docker-compose.yml
 ├── package.json
 └── tsconfig.json
 ```
